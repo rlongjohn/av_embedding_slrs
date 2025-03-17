@@ -12,8 +12,41 @@ from models.models import NeuralScoreLR, ManualScoreLR
 import utils.lexical as lex
 import nltk
 
-# function for processing a json file into the dataframe format
 def process_json_to_df(fdir, stop_words, punct_list, english_vocab):
+    """Process the json of text data into a pandas dataframe.
+
+    For counting punctuation, takes all characters in the input string
+    and checks against string.punctuation (this is what's passed to punct_list).
+
+    For counting stop words, use the regex from the nltk wordpunct tokenizer
+    https://www.nltk.org/api/nltk.tokenize.regexp.html#nltk.tokenize.regexp.WordPunctTokenizer
+    except keep apostrophe's together to be able to find those stop words.
+
+    stop_words are passed as an argument but what's input are the words in
+    the quanteda-stopwords.txt file.
+
+    To avoid processing the english_vocab every time, it is passed as an argument.
+    However, it's generally calculated via set(w.lower() for w in nltk.corpus.words.words())
+    based on https://www.nltk.org/book/ch02.html#code-unusual
+
+    Lexical features are implemented via the lexical.py file in utils/
+
+    We exclude document pairs for which at least one of the texts has an undefined lexical feature.
+
+    Arguments:
+        fdir: str
+        stop_words: list
+        punct_list: list
+        english_vocab: set
+
+    Returns:
+        text_data: dataframe
+            problem id, same_source, user_id, text_id, text
+        stop_punct_data: dataframe
+            problem id, same_source, user_id, text_id, text, [punct cols], [stop cols]
+        lexical_data: dataframe
+            problem id, same_source, user_id, text_id, text, [lexical cols]
+    """
     with open(fdir, 'r') as json_file:
         json_list = list(json_file)
 
@@ -42,7 +75,7 @@ def process_json_to_df(fdir, stop_words, punct_list, english_vocab):
         text0 = d['pair'][0]
         text0_punct = [a for a in text0 if a in punct_list]
         text0_punct_count = Counter(text0_punct)
-        text0_stop = [s for s in re.findall(r"[\w']+|[.,!?;\"]", text0)]
+        text0_stop = [s.lower() for s in re.findall(r"[\w']+|[^\w\s]+", text0)]
         text0_stop_count = Counter(text0_stop)
         text0_yulei = lex.calc_yulei(text0)
         text0_ttr = lex.calc_ttr(text0)
@@ -56,7 +89,7 @@ def process_json_to_df(fdir, stop_words, punct_list, english_vocab):
         text1 = d['pair'][1]
         text1_punct = [a for a in text1 if a in punct_list]
         text1_punct_count = Counter(text1_punct)
-        text1_stop = [s for s in re.findall(r"[\w']+|[.,!?;\"]", text1)]
+        text1_stop = [s.lower() for s in re.findall(r"[\w']+|[^\w\s]+", text1)]
         text1_stop_count = Counter(text1_stop)
         text1_yulei = lex.calc_yulei(text1)
         text1_ttr = lex.calc_ttr(text1)
@@ -67,7 +100,9 @@ def process_json_to_df(fdir, stop_words, punct_list, english_vocab):
         text1_avgchar = lex.calc_avg_chars(text1)
         text1_punct = lex.calc_punct_ratio(text1)
 
-        if not any((np.isinf(text0_yulei), np.isinf(text1_yulei), np.isinf(text0_unusual), np.isinf(text1_unusual))):
+        if not any([np.isinf(text0_yulei), np.isinf(text1_yulei), 
+                    np.isinf(text0_unusual), np.isinf(text1_unusual), 
+                    np.isinf(text0_honorer), np.isinf(text1_honorer)]):
             problem_ids.append(d['id'])
             same_sources.append(d['same'])
             user_ids.append(d['authors'][0])
@@ -125,9 +160,9 @@ def process_json_to_df(fdir, stop_words, punct_list, english_vocab):
 
     return text_data, stop_punct_data, lexical_data
 
-def sample_data(text_data, stop_punct_data, znorm_count_data, znorm_lexical_data, n):
-    ss_probs = np.random.choice(text_data['problem_id'][text_data['same_source'] == True].unique(), size=n, replace=False).tolist()
-    ds_probs = np.random.choice(text_data['problem_id'][text_data['same_source'] == False].unique(), size=n, replace=False).tolist()
+def sample_data(text_data, stop_punct_data, znorm_count_data, znorm_lexical_data, n, rng):
+    ss_probs = rng.choice(text_data['problem_id'][text_data['same_source'] == True].unique(), size=n, replace=False).tolist()
+    ds_probs = rng.choice(text_data['problem_id'][text_data['same_source'] == False].unique(), size=n, replace=False).tolist()
 
     text_data = text_data.loc[text_data['problem_id'].isin(ss_probs + ds_probs), :]
     stop_punct_data = stop_punct_data.loc[stop_punct_data['problem_id'].isin(ss_probs + ds_probs), :]
@@ -152,7 +187,7 @@ def main():
     logger.info("Starting setup")
 
     # set seed for reproducibility
-    np.random.seed(1234)
+    rng = np.random.default_rng(110926552114378630015775287249569522156)
 
     # set up command line parsing to get list of datasets to run experiments on
     parser = argparse.ArgumentParser()
@@ -218,12 +253,12 @@ def main():
         test_znorm_lex_full = test_lexical_data_full.copy()
         test_znorm_lex_full[lex_cols] = test_znorm_lex_full[lex_cols].apply(z_transform, axis=1, args=(train_lex_means, train_lex_stds))
 
-        # remove columns with 0 counts
-        stoppunct_cols = stoppunct_cols.drop(train_count_stds[(train_count_stds == 0) & (train_count_means == 0)].index.tolist())
-        train_znorm_counts_full = train_znorm_counts_full.loc[:, ['problem_id', 'same_source', 'user_id', 'text_id', 'text'] + stoppunct_cols.tolist()]
-        train_stop_punct_data_full = train_stop_punct_data_full.loc[:, ['problem_id', 'same_source', 'user_id', 'text_id', 'text'] + stoppunct_cols.tolist()]
-        test_znorm_counts_full = test_znorm_counts_full.loc[:, ['problem_id', 'same_source', 'user_id', 'text_id', 'text'] + stoppunct_cols.tolist()]
-        test_stop_punct_data_full = test_stop_punct_data_full.loc[:, ['problem_id', 'same_source', 'user_id', 'text_id', 'text'] + stoppunct_cols.tolist()]
+        # remove columns with 0 counts for standardized vals going into distances (since they're undefined)
+        znorm_stoppunct_cols = stoppunct_cols.drop(train_count_stds[(train_count_stds == 0)].index.tolist())
+        train_znorm_counts_full = train_znorm_counts_full.loc[:, ['problem_id', 'same_source', 'user_id', 'text_id', 'text'] + znorm_stoppunct_cols.tolist()]
+        # train_stop_punct_data_full = train_stop_punct_data_full.loc[:, ['problem_id', 'same_source', 'user_id', 'text_id', 'text'] + stoppunct_cols.tolist()]
+        test_znorm_counts_full = test_znorm_counts_full.loc[:, ['problem_id', 'same_source', 'user_id', 'text_id', 'text'] + znorm_stoppunct_cols.tolist()]
+        # test_stop_punct_data_full = test_stop_punct_data_full.loc[:, ['problem_id', 'same_source', 'user_id', 'text_id', 'text'] + stoppunct_cols.tolist()]
 
         for nrep in range(args.nrepeat):
 
@@ -235,41 +270,48 @@ def main():
                 train_stop_punct_data_full,
                 train_znorm_counts_full,
                 train_znorm_lex_full, 
-                args.ntrain
+                args.ntrain,
+                rng
             )
             test_text_data, test_stop_punct_data, test_znorm_counts, test_znorm_lex = sample_data(
                 test_text_data_full, 
                 test_stop_punct_data_full,
                 test_znorm_counts_full,
                 test_znorm_lex_full, 
-                args.ntest
+                args.ntest,
+                rng
             )
 
             # split data into same source, different source
             ss_train_data = train_text_data.loc[train_text_data['same_source'] == True, ['user_id', 'problem_id', 'text_id', 'text']]
             ds_train_data = train_text_data.loc[train_text_data['same_source'] == False, ['user_id', 'problem_id', 'text_id', 'text']]
-            ss_train_znorm = train_znorm_counts.loc[train_znorm_counts['same_source'] == True, ['user_id', 'problem_id', 'text_id'] + stoppunct_cols.to_list()]
-            ds_train_znorm = train_znorm_counts.loc[train_znorm_counts['same_source'] == False, ['user_id', 'problem_id', 'text_id'] + stoppunct_cols.to_list()]
+            ss_train_znorm = train_znorm_counts.loc[train_znorm_counts['same_source'] == True, ['user_id', 'problem_id', 'text_id'] + znorm_stoppunct_cols.to_list()]
+            ds_train_znorm = train_znorm_counts.loc[train_znorm_counts['same_source'] == False, ['user_id', 'problem_id', 'text_id'] + znorm_stoppunct_cols.to_list()]
             ss_train_lex = train_znorm_lex.loc[train_znorm_lex['same_source'] == True, ['user_id', 'problem_id', 'text_id'] + lex_cols.to_list()]
             ds_train_lex = train_znorm_lex.loc[train_znorm_lex['same_source'] == False, ['user_id', 'problem_id', 'text_id'] + lex_cols.to_list()]
-            ss_train_counts = train_stop_punct_data.loc[train_stop_punct_data['same_source'] == True, ['user_id', 'problem_id', 'text_id'] + stoppunct_cols.to_list()]
+            # ss_train_counts = train_stop_punct_data.loc[train_stop_punct_data['same_source'] == True, ['user_id', 'problem_id', 'text_id'] + stoppunct_cols.to_list()]
+            train_counts = train_stop_punct_data.loc[:, ['user_id', 'text'] + stoppunct_cols.to_list()].drop_duplicates()
 
+            logger.info("Train text data nrows: " + str(train_text_data.shape[0]))
             logger.info("Test text data nrows: " + str(test_text_data.shape[0]))
             
             ss_test_data = test_text_data.loc[test_text_data['same_source'] == True, ['user_id', 'problem_id', 'text_id', 'text']]
             ds_test_data = test_text_data.loc[test_text_data['same_source'] == False, ['user_id', 'problem_id', 'text_id', 'text']]
-            ss_test_znorm = test_znorm_counts.loc[test_znorm_counts['same_source'] == True, ['user_id', 'problem_id', 'text_id'] + stoppunct_cols.to_list()]
-            ds_test_znorm = test_znorm_counts.loc[test_znorm_counts['same_source'] == False, ['user_id', 'problem_id', 'text_id'] + stoppunct_cols.to_list()]
+            ss_test_znorm = test_znorm_counts.loc[test_znorm_counts['same_source'] == True, ['user_id', 'problem_id', 'text_id'] + znorm_stoppunct_cols.to_list()]
+            ds_test_znorm = test_znorm_counts.loc[test_znorm_counts['same_source'] == False, ['user_id', 'problem_id', 'text_id'] + znorm_stoppunct_cols.to_list()]
             ss_test_counts = test_stop_punct_data.loc[test_stop_punct_data['same_source'] == True, ['user_id', 'problem_id', 'text_id'] + stoppunct_cols.to_list()]
             ds_test_counts = test_stop_punct_data.loc[test_stop_punct_data['same_source'] == False, ['user_id', 'problem_id', 'text_id'] + stoppunct_cols.to_list()]
             ss_test_lex = test_znorm_lex.loc[test_znorm_lex['same_source'] == True, ['user_id', 'problem_id', 'text_id'] + lex_cols.to_list()]
             ds_test_lex = test_znorm_lex.loc[test_znorm_lex['same_source'] == False, ['user_id', 'problem_id', 'text_id'] + lex_cols.to_list()]
 
-            logger.info("ss text data nrows: " + str(ss_test_data.shape[0]))
-            logger.info("ds text data nrows: " + str(ds_test_data.shape[0]))
+            logger.info("ss train text data nrows: " + str(ss_train_data.shape[0]))
+            logger.info("ds train text data nrows: " + str(ds_train_data.shape[0]))
+            logger.info("ss test text data nrows: " + str(ss_test_data.shape[0]))
+            logger.info("ds test text data nrows: " + str(ds_test_data.shape[0]))
             
             # set prior for multinomial dirichlet model
-            col_counts = np.array(ss_train_counts.iloc[:, 3:].sum(axis = 0)) + 1
+            # col_counts = np.array(ss_train_counts.iloc[:, 3:].sum(axis = 0)) + 1
+            col_counts = np.array(train_counts.iloc[:, 2:].sum(axis = 0)) + 1
             alpha = col_counts/sum(col_counts)*len(stoppunct_cols)
 
             logger.info("Starting training of neural slr methods")
@@ -277,9 +319,10 @@ def main():
             # instantiate lr models
             luar_slr_avg = NeuralScoreLR(embedding_model="luar", handle_long="avg", dist="cosine")
             luar_slr_tru = NeuralScoreLR(embedding_model="luar", handle_long="truncate", dist="cosine")
+            luar_slr_win = NeuralScoreLR(embedding_model="luar", handle_long="window", dist="cosine")
             cisr_slr_avg = NeuralScoreLR(embedding_model="cisr", handle_long="avg", dist="cosine")
             cisr_slr_tru = NeuralScoreLR(embedding_model="cisr", handle_long="truncate", dist="cosine")
-            znorm_slr = ManualScoreLR(feature_cols=stoppunct_cols, dist="cosine")
+            znorm_slr = ManualScoreLR(feature_cols=znorm_stoppunct_cols, dist="cosine")
             lex_slr = ManualScoreLR(feature_cols=lex_cols, dist="cosine")
 
             # train slr methods
@@ -287,6 +330,8 @@ def main():
             luar_slr_avg.train(ss_train_data, ds_train_data)
             logger.info("---------- Training LUAR TRU ----------")
             luar_slr_tru.train(ss_train_data, ds_train_data)
+            logger.info("---------- Training LUAR WIN ----------")
+            luar_slr_win.train(ss_train_data, ds_train_data)
             logger.info("---------- Training CISR AVG ----------")
             cisr_slr_avg.train(ss_train_data, ds_train_data)
             logger.info("---------- Training CISR TRU ----------")
@@ -303,6 +348,8 @@ def main():
             ss_test_lrs_luar_avg, ds_test_lrs_luar_avg = luar_slr_avg.test(ss_test_data, ds_test_data)
             logger.info("---------- Testing LUAR TRU ----------")
             ss_test_lrs_luar_tru, ds_test_lrs_luar_tru = luar_slr_tru.test(ss_test_data, ds_test_data)
+            logger.info("---------- Testing LUAR WIN ----------")
+            ss_test_lrs_luar_win, ds_test_lrs_luar_win = luar_slr_win.test(ss_test_data, ds_test_data)
             logger.info("---------- Testing CISR AVG ----------")
             ss_test_lrs_cisr_avg, ds_test_lrs_cisr_avg = cisr_slr_avg.test(ss_test_data, ds_test_data)
             logger.info("---------- Testing CISR TRU ----------")
@@ -316,13 +363,15 @@ def main():
 
             # multinomial evaluate on test data
             ss_test_lrs_counts = []
-            for prob in list(set(ss_test_data['problem_id'])):
+            # for prob in list(set(ss_test_data['problem_id'])):
+            for prob in ss_test_data['problem_id'].unique():
                 r1 = ss_test_counts.loc[(ss_test_counts['problem_id'] == prob) & (ss_test_counts['text_id'] == 0), stoppunct_cols].values.flatten()
                 r2 = ss_test_counts.loc[(ss_test_counts['problem_id'] == prob) & (ss_test_counts['text_id'] == 1), stoppunct_cols].values.flatten()
                 ss_test_lrs_counts.append(get_lnlr(r1, r2, alpha))
 
             ds_test_lrs_counts = []
-            for prob in list(set(ds_test_data['problem_id'])):
+            # for prob in list(set(ds_test_data['problem_id'])):
+            for prob in ds_test_data['problem_id'].unique():
                 r1 = ds_test_counts.loc[(ds_test_counts['problem_id'] == prob) & (ds_test_counts['text_id'] == 0), stoppunct_cols].values.flatten()
                 r2 = ds_test_counts.loc[(ds_test_counts['problem_id'] == prob) & (ds_test_counts['text_id'] == 1), stoppunct_cols].values.flatten()
                 ds_test_lrs_counts.append(get_lnlr(r1, r2, alpha))
@@ -332,10 +381,11 @@ def main():
             # write training scores to csv for plots
             train_labels = [[True]*args.ntrain, [False]*args.ntrain]
             train_labels = [j for i in train_labels for j in i]
-            train_scores_df = pd.DataFrame({'problem_id': list(set(ss_train_data['problem_id'].to_list() + ds_train_data['problem_id'].to_list())),
+            train_scores_df = pd.DataFrame({'problem_id': ss_train_data['problem_id'].unique().tolist() + ds_train_data['problem_id'].unique().tolist(),
                                             'same_source': train_labels,
                                             'luar_avg_score': getattr(luar_slr_avg, 'ss_scores') + getattr(luar_slr_avg, 'ds_scores'),
                                             'luar_tru_score': getattr(luar_slr_tru, 'ss_scores') + getattr(luar_slr_tru, 'ds_scores'),
+                                            'luar_win_score': getattr(luar_slr_win, 'ss_scores') + getattr(luar_slr_win, 'ds_scores'),
                                             'cisr_avg_score': getattr(cisr_slr_avg, 'ss_scores') + getattr(cisr_slr_avg, 'ds_scores'),
                                             'cisr_tru_score': getattr(cisr_slr_tru, 'ss_scores') + getattr(cisr_slr_tru, 'ds_scores'),
                                             'znorm_score': getattr(znorm_slr, 'ss_scores') + getattr(znorm_slr, 'ds_scores'),
@@ -345,10 +395,11 @@ def main():
             # write test scores to csv for analysis
             test_labels = [[True]*args.ntest, [False]*args.ntest]
             test_labels = [j for i in test_labels for j in i]
-            test_lr_results = pd.DataFrame({'problem_id': list(set(ss_test_data['problem_id'].to_list() + ds_test_data['problem_id'].to_list())),
+            test_lr_results = pd.DataFrame({'problem_id': ss_test_data['problem_id'].unique().tolist() + ds_test_data['problem_id'].unique().tolist(),
                                     'same_source': test_labels,
                                     'luar_avg_lr': np.concatenate(ss_test_lrs_luar_avg).ravel().tolist() + np.concatenate(ds_test_lrs_luar_avg).ravel().tolist(),
                                     'luar_tru_lr': np.concatenate(ss_test_lrs_luar_tru).ravel().tolist() + np.concatenate(ds_test_lrs_luar_tru).ravel().tolist(),
+                                    'luar_win_lr': np.concatenate(ss_test_lrs_luar_win).ravel().tolist() + np.concatenate(ds_test_lrs_luar_win).ravel().tolist(),
                                     'cisr_avg_lr': np.concatenate(ss_test_lrs_cisr_avg).ravel().tolist() + np.concatenate(ds_test_lrs_cisr_avg).ravel().tolist(),
                                     'cisr_tru_lr': np.concatenate(ss_test_lrs_cisr_tru).ravel().tolist() + np.concatenate(ds_test_lrs_cisr_tru).ravel().tolist(),
                                     'znorm_lr': np.concatenate(ss_test_lrs_znorm).ravel().tolist() + np.concatenate(ds_test_lrs_znorm).ravel().tolist(),
