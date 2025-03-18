@@ -131,7 +131,10 @@ def calc_yulei(text):
     words = [w.lower() for w in words]
     freq_i_N = get_wordfrequency_table(words)
     total_sum = freq_i_N.sum_element.sum()
-    return len(words)**2 / (total_sum - len(words))
+    if total_sum - len(words) == 0:
+        return np.inf
+    else:
+        return len(words)**2 / (total_sum - len(words))
 
 def calc_unusual_word_ratio(text, english_vocab):
     """Calculate the unusual word ratio
