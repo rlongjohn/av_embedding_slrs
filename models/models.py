@@ -45,7 +45,7 @@ class ManualScoreLR(ScoreLR):
         self.ss_scores = []
         self.ds_scores = []
         logger.info("Training same source")
-        ss_probs = list(set(ss_train_data['problem_id']))
+        ss_probs = ss_train_data['problem_id'].unique().tolist()
         counter = 0
         for prob in ss_probs:
             if counter % 100 == 0:
@@ -58,7 +58,7 @@ class ManualScoreLR(ScoreLR):
             self.ss_scores.append(self.score(znorm0, znorm1))
 
         logger.info("Training different source")
-        ds_probs = list(set(ds_train_data['problem_id']))
+        ds_probs = ds_train_data['problem_id'].unique().tolist()
         counter = 0
         for prob in ds_probs:
             if counter % 100 == 0:
@@ -75,7 +75,7 @@ class ManualScoreLR(ScoreLR):
 
     def test(self, ss_test_data, ds_test_data):
         self.ss_test_scores = []
-        ss_test_probs = list(set(ss_test_data['problem_id']))
+        ss_test_probs = ss_test_data['problem_id'].unique().tolist()
         ss_test_slrs = []
 
         counter = 0
@@ -94,7 +94,7 @@ class ManualScoreLR(ScoreLR):
             ss_test_slrs.append(self.slr_from_score([score]))
     
         self.ds_test_scores = []
-        ds_test_probs = list(set(ds_test_data['problem_id']))
+        ds_test_probs = ds_test_data['problem_id'].unique().tolist()
 
         ds_test_slrs = []
 
@@ -133,6 +133,9 @@ class NeuralScoreLR(ScoreLR):
         if self.handle_long == "avg":
             emb_x = self.embedding_model.calc_embedding_avg(x)
             emb_y = self.embedding_model.calc_embedding_avg(y)
+        elif self.handle_long == "window":
+            emb_x = self.embedding_model.calc_embedding_window(x)
+            emb_y = self.embedding_model.calc_embedding_window(y)
         else:
             emb_x = self.embedding_model.calc_embedding_truncated(x)
             emb_y = self.embedding_model.calc_embedding_truncated(y)
@@ -146,7 +149,7 @@ class NeuralScoreLR(ScoreLR):
         self.ss_scores = []
         self.ds_scores = []
         logger.info("Training same source")
-        ss_probs = list(set(ss_train_data['problem_id']))
+        ss_probs = ss_train_data['problem_id'].unique().tolist()
         counter = 0
         for prob in ss_probs:
             if counter % 100 == 0:
@@ -159,7 +162,7 @@ class NeuralScoreLR(ScoreLR):
             self.ss_scores.append(self.score(text0, text1))
 
         logger.info("Training different source")
-        ds_probs = list(set(ds_train_data['problem_id']))
+        ds_probs = ds_train_data['problem_id'].unique().tolist()
         counter = 0
         for prob in ds_probs:
             if counter % 100 == 0:
@@ -177,7 +180,7 @@ class NeuralScoreLR(ScoreLR):
 
     def test(self, ss_test_data, ds_test_data):
         self.ss_test_scores = []
-        ss_test_probs = list(set(ss_test_data['problem_id']))
+        ss_test_probs = ss_test_data['problem_id'].unique().tolist()
 
         ss_test_slrs = []
 
@@ -196,7 +199,7 @@ class NeuralScoreLR(ScoreLR):
             ss_test_slrs.append(self.slr_from_score([score]))
 
         self.ds_test_scores = []
-        ds_test_probs = list(set(ds_test_data['problem_id']))
+        ds_test_probs = ds_test_data['problem_id'].unique().tolist()
 
         ds_test_slrs = []
 
