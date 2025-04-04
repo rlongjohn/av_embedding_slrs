@@ -252,4 +252,3 @@ dependencies:
   - zstd=1.5.5
   - pip:
       - en-core-web-sm==3.7.1
-prefix: /Users/rachellongjohn/anaconda3/envs/text-forensics
